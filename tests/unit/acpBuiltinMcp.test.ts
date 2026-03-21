@@ -199,6 +199,9 @@ describe('McpService Gemini detection', () => {
     vi.doMock('../../src/process/services/mcpServices/agents/CodexMcpAgent', () => ({
       CodexMcpAgent: makeAgentClass(emptyDetect),
     }));
+    vi.doMock('../../src/process/services/mcpServices/agents/KiloMcpAgent', () => ({
+      KiloMcpAgent: makeAgentClass(emptyDetect),
+    }));
 
     const { McpService } = await import('../../src/process/services/mcpServices/McpService');
     const service = new McpService();
@@ -244,6 +247,9 @@ describe('McpService Gemini detection', () => {
     }));
     vi.doMock('../../src/process/services/mcpServices/agents/CodexMcpAgent', () => ({
       CodexMcpAgent: makeAgentClass(emptyDetect),
+    }));
+    vi.doMock('../../src/process/services/mcpServices/agents/KiloMcpAgent', () => ({
+      KiloMcpAgent: makeAgentClass(emptyDetect),
     }));
 
     const { McpService } = await import('../../src/process/services/mcpServices/McpService');
@@ -292,6 +298,9 @@ describe('McpService Gemini detection', () => {
     }));
     vi.doMock('../../src/process/services/mcpServices/agents/CodexMcpAgent', () => ({
       CodexMcpAgent: makeAgentClass(emptyDetect),
+    }));
+    vi.doMock('../../src/process/services/mcpServices/agents/KiloMcpAgent', () => ({
+      KiloMcpAgent: makeAgentClass(emptyDetect),
     }));
 
     const { McpService } = await import('../../src/process/services/mcpServices/McpService');

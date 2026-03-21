@@ -70,6 +70,7 @@ export type AcpBackendAll =
   | 'vibe' // Mistral Vibe CLI
   | 'nanobot' // nanobot CLI
   | 'cursor' // Cursor AI Agent CLI
+  | 'kilo' // Kilo CLI
   | 'custom'; // User-configured custom ACP agent
 
 /**
@@ -472,6 +473,15 @@ export const ACP_BACKENDS_ALL: Record<AcpBackendAll, AcpBackendConfig> = {
     enabled: true, // ✅ Cursor AI Agent CLI, launched via `agent acp`
     supportsStreaming: false,
     acpArgs: ['acp'], // Cursor uses `agent acp` subcommand
+  },
+  kilo: {
+    id: 'kilo',
+    name: 'Kilo CLI',
+    cliCommand: 'kilo',
+    authRequired: false,
+    enabled: true, // ✅ Kilo CLI, launched via `kilo --experimental-acp`
+    supportsStreaming: false,
+    acpArgs: ['--experimental-acp'], // Kilo uses --experimental-acp flag
   },
   custom: {
     id: 'custom',

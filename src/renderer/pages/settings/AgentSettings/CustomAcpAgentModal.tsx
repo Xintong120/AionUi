@@ -24,6 +24,7 @@ import AuggieLogo from '@/renderer/assets/logos/brand/auggie.svg';
 import KimiLogo from '@/renderer/assets/logos/ai-china/kimi.svg';
 import OpencodeLogo from '@/renderer/assets/logos/tools/coding/opencode.svg';
 import QoderLogo from '@/renderer/assets/logos/tools/coding/qoder.png';
+import KiloLogo from '@/renderer/assets/logos/tools/coding/kilo.svg';
 
 /**
  * 后端 Logo 映射表，用于在 CLI 卡片中显示对应的图标
@@ -36,6 +37,7 @@ const BACKEND_LOGO_MAP: Record<string, string> = {
   kimi: KimiLogo,
   opencode: OpencodeLogo,
   qoder: QoderLogo,
+  kilo: KiloLogo,
 };
 
 interface CustomAcpAgentModalProps {
