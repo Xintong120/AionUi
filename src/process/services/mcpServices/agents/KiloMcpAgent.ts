@@ -34,84 +34,102 @@ export class KiloMcpAgent extends AbstractMcpAgent {
   detectMcpServers(_cliPath?: string): Promise<IMcpServer[]> {
     const detectOperation = async () => {
       try {
-        // 尝试通过Kilo CLI命令获取MCP配置
-        // 假设Kilo CLI有类似"mcp list"命令
-        const { stdout: result } = await safeExec('kilo mcp list', { timeout: this.timeout, ...getExecEnv() });
+        // 读取Kilo配置文件获取MCP服务器配置
+        // 配置存储在kilo.json或相关配置文件中
+        const configPaths = [
+          'kilo.json',
+          'kilo.jsonc',
+          '.kilo/kilo.json',
+          '.kilo/kilo.jsonc',
+          'opencode.json',
+          'opencode.jsonc',
+          '.opencode/opencode.json',
+          '.opencode/opencode.jsonc'
+        ];
 
-        // 如果没有配置任何MCP服务器，返回空数组
-        if (result.includes('No MCP servers configured') || !result.trim()) {
-          console.log('[KiloMcpAgent] No MCP servers configured');
+        let configContent = '';
+        let configPath = '';
+
+        for (const path of configPaths) {
+          try {
+            const { stdout } = await safeExec(`cat "${path}"`, { timeout: 5000, ...getExecEnv() });
+            if (stdout.trim()) {
+              configContent = stdout;
+              configPath = path;
+              break;
+            }
+          } catch {
+            // 尝试下一个路径
+            continue;
+          }
+        }
+
+        if (!configContent) {
+          console.log('[KiloMcpAgent] No Kilo config file found');
           return [];
         }
 
-        // 解析文本输出
+        // 解析JSON配置
+        const config = JSON.parse(configContent);
+        const mcpConfig = config.mcp || {};
+
+        if (Object.keys(mcpConfig).length === 0) {
+          console.log('[KiloMcpAgent] No MCP servers configured in config');
+          return [];
+        }
+
+        // 转换配置为IMcpServer格式
         const mcpServers: IMcpServer[] = [];
-        const lines = result.split('\n');
 
-        for (const line of lines) {
-          // 清除 ANSI 颜色代码
-          // eslint-disable-next-line no-control-regex
-          const cleanLine = line.replace(/\u001b\[[0-?]*[ -/]*[@-~]/g, '').trim();
+        for (const [name, serverConfig] of Object.entries(mcpConfig)) {
+          if (!serverConfig || typeof serverConfig !== 'object' || !('type' in serverConfig)) {
+            continue;
+          }
 
-          // 查找格式如: "✓ filesystem: npx @modelcontextprotocol/server-filesystem /path - Connected"
-          const match = cleanLine.match(/[✓✗]\s+([^:]+):\s+(.+?)\s*-\s*(Connected|Disconnected)/);
-          if (match) {
-            const [, name, commandStr, status] = match;
-            const commandParts = commandStr.trim().split(/\s+/);
-            const command = commandParts[0];
-            const args = commandParts.slice(1);
+          const config = serverConfig as any;
 
-            // 构建transport对象 (Kilo主要支持stdio)
+          if (config.type === 'local' && config.command) {
+            // 本地stdio服务器
+            const commandParts = Array.isArray(config.command) ? config.command : config.command.split(/\s+/);
             const transportObj: IMcpServer['transport'] = {
               type: 'stdio',
-              command: command,
-              args: args,
-              env: {},
+              command: commandParts[0],
+              args: commandParts.slice(1),
+              env: config.env || {},
             };
 
-            // 尝试获取tools信息（对所有已连接的服务器）
+            // 尝试测试连接获取tools信息
             let tools: Array<{ name: string; description?: string }> = [];
-            if (status === 'Connected') {
-              try {
-                const testResult = await this.testMcpConnection(transportObj);
-                tools = testResult.tools || [];
-              } catch (error) {
-                console.warn(`[KiloMcpAgent] Failed to get tools for ${name.trim()}:`, error);
-                // 如果获取tools失败，继续使用空数组
-              }
+            try {
+              const testResult = await this.testMcpConnection(transportObj);
+              tools = testResult.tools || [];
+            } catch (error) {
+              console.warn(`[KiloMcpAgent] Failed to get tools for ${name}:`, error);
             }
 
             mcpServers.push({
-              id: `kilo_${name.trim()}`,
-              name: name.trim(),
+              id: `kilo_${name}`,
+              name: name,
               transport: transportObj,
               tools: tools,
-              enabled: true,
-              status: status === 'Connected' ? 'connected' : 'disconnected',
+              enabled: config.enabled !== false,
+              status: 'unknown', // 需要额外检查状态
               createdAt: Date.now(),
               updatedAt: Date.now(),
-              description: '',
-              originalJson: JSON.stringify(
-                {
-                  mcpServers: {
-                    [name.trim()]: {
-                      command: command,
-                      args: args,
-                      description: `Detected from Kilo CLI`,
-                    },
-                  },
-                },
-                null,
-                2
-              ),
+              description: config.description || '',
+              originalJson: JSON.stringify({ [name]: config }, null, 2),
             });
+          } else if (config.type === 'remote' && config.url) {
+            // 远程服务器 - 不支持，直接跳过
+            console.log(`[KiloMcpAgent] Skipping remote MCP server ${name} - not supported in this context`);
+            continue;
           }
         }
 
         console.log(`[KiloMcpAgent] Detection complete: found ${mcpServers.length} server(s)`);
         return mcpServers;
       } catch (error) {
-        console.warn('[KiloMcpAgent] Failed to get Kilo CLI MCP config:', error);
+        console.warn('[KiloMcpAgent] Failed to read Kilo config:', error);
         return [];
       }
     };
@@ -127,22 +145,65 @@ export class KiloMcpAgent extends AbstractMcpAgent {
   installMcpServers(mcpServers: IMcpServer[]): Promise<McpOperationResult> {
     const installOperation = async () => {
       try {
+        // 查找Kilo配置文件
+        const configPaths = [
+          'kilo.json',
+          'kilo.jsonc',
+          '.kilo/kilo.json',
+          '.kilo/kilo.jsonc',
+          'opencode.json',
+          'opencode.jsonc',
+          '.opencode/opencode.json',
+          '.opencode/opencode.jsonc'
+        ];
+
+        let configPath = '';
+        for (const path of configPaths) {
+          try {
+            await safeExec(`test -f "${path}"`, { timeout: 1000, ...getExecEnv() });
+            configPath = path;
+            break;
+          } catch {
+            continue;
+          }
+        }
+
+        // 如果没有找到配置文件，使用默认路径
+        if (!configPath) {
+          configPath = 'kilo.json';
+        }
+
         for (const server of mcpServers) {
           if (server.transport.type === 'stdio') {
-            // 使用Kilo CLI添加MCP服务器
-            // 假设格式: kilo mcp add <name> <command> [args...]
-            let command = `kilo mcp add "${server.name}" "${server.transport.command}"`;
-            if (server.transport.args?.length) {
-              const quotedArgs = server.transport.args.map((arg: string) => `"${arg}"`).join(' ');
-              command += ` ${quotedArgs}`;
+            // 直接修改配置文件添加MCP服务器
+            const mcpConfig = {
+              type: 'local' as const,
+              command: [server.transport.command, ...(server.transport.args || [])],
+              enabled: server.enabled,
+              description: server.description || '',
+            };
+
+            // 读取现有配置
+            let configContent = '{}';
+            try {
+              const { stdout } = await safeExec(`cat "${configPath}"`, { timeout: 5000, ...getExecEnv() });
+              configContent = stdout || '{}';
+            } catch {
+              // 文件不存在，使用空配置
             }
 
-            try {
-              await safeExec(command, { timeout: 5000, ...getExecEnv() });
-              console.log(`[KiloMcpAgent] Added MCP server: ${server.name}`);
-            } catch (error) {
-              console.warn(`Failed to add MCP ${server.name} to Kilo CLI:`, error);
+            // 解析并更新配置
+            const config = JSON.parse(configContent);
+            if (!config.mcp) {
+              config.mcp = {};
             }
+            config.mcp[server.name] = mcpConfig;
+
+            // 写回配置文件
+            const updatedConfig = JSON.stringify(config, null, 2);
+            await safeExec(`echo '${updatedConfig.replace(/'/g, "'\\''")}' > "${configPath}"`, { timeout: 5000, ...getExecEnv() });
+
+            console.log(`[KiloMcpAgent] Added MCP server: ${server.name} to ${configPath}`);
           }
         }
         return { success: true };
@@ -161,21 +222,58 @@ export class KiloMcpAgent extends AbstractMcpAgent {
   removeMcpServer(mcpServerName: string): Promise<McpOperationResult> {
     const removeOperation = async () => {
       try {
-        // 使用Kilo CLI命令删除MCP服务器
-        const removeCommand = `kilo mcp remove "${mcpServerName}"`;
+        // 查找Kilo配置文件
+        const configPaths = [
+          'kilo.json',
+          'kilo.jsonc',
+          '.kilo/kilo.json',
+          '.kilo/kilo.jsonc',
+          'opencode.json',
+          'opencode.jsonc',
+          '.opencode/opencode.json',
+          '.opencode/opencode.jsonc'
+        ];
 
-        try {
-          const result = await safeExec(removeCommand, { timeout: 5000, ...getExecEnv() });
-
-          if (result.stdout && (result.stdout.includes('removed') || result.stdout.includes('deleted'))) {
-            console.log(`[KiloMcpAgent] Removed MCP server: ${mcpServerName}`);
-            return { success: true };
+        let configPath = '';
+        for (const path of configPaths) {
+          try {
+            await safeExec(`test -f "${path}"`, { timeout: 1000, ...getExecEnv() });
+            configPath = path;
+            break;
+          } catch {
+            continue;
           }
-        } catch (error) {
-          console.warn(`[KiloMcpAgent] Failed to remove MCP server: ${mcpServerName}`, error);
         }
 
-        // 如果CLI命令失败，认为删除成功（服务器可能本来就不存在）
+        if (!configPath) {
+          console.log(`[KiloMcpAgent] No config file found to remove server: ${mcpServerName}`);
+          return { success: true }; // 没有配置文件，认为删除成功
+        }
+
+        // 读取现有配置
+        let configContent = '{}';
+        try {
+          const { stdout } = await safeExec(`cat "${configPath}"`, { timeout: 5000, ...getExecEnv() });
+          configContent = stdout || '{}';
+        } catch {
+          console.log(`[KiloMcpAgent] Config file not found: ${configPath}`);
+          return { success: true };
+        }
+
+        // 解析并删除服务器配置
+        const config = JSON.parse(configContent);
+        if (config.mcp && config.mcp[mcpServerName]) {
+          delete config.mcp[mcpServerName];
+
+          // 写回配置文件
+          const updatedConfig = JSON.stringify(config, null, 2);
+          await safeExec(`echo '${updatedConfig.replace(/'/g, "'\\''")}' > "${configPath}"`, { timeout: 5000, ...getExecEnv() });
+
+          console.log(`[KiloMcpAgent] Removed MCP server: ${mcpServerName} from ${configPath}`);
+        } else {
+          console.log(`[KiloMcpAgent] MCP server not found in config: ${mcpServerName}`);
+        }
+
         return { success: true };
       } catch (error) {
         return { success: false, error: error instanceof Error ? error.message : String(error) };
